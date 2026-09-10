@@ -45,7 +45,10 @@ const gpsOf = (item: any): { lat: number; lng: number } | undefined => {
 };
 
 const mapsUrl = (point: MapPoint) => {
-  const query = point.gps ? `${point.gps.lat},${point.gps.lng}` : point.address || point.name;
+  // Adres heeft voorrang: dat is wat de gebruiker ziet en heeft geverifieerd.
+  // GPS-coördinaten dienen alleen als fallback wanneer er geen adres bekend is
+  // (coördinaten uit een import kunnen fout zijn terwijl het adres wel klopt).
+  const query = point.address || (point.gps ? `${point.gps.lat},${point.gps.lng}` : point.name);
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 };
 
