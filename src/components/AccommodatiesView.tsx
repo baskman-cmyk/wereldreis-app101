@@ -24,10 +24,14 @@ const formatDate = (date?: string) => {
   return Number.isNaN(value.getTime()) ? date : new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "short", year: "numeric" }).format(value);
 };
 const mapsUrl = (item: Accommodation) => {
+  const address = addressOf(item) || locationFallback(item);
   const lat = Number(item.gps?.lat ?? item.lat);
   const lng = Number(item.gps?.lng ?? item.lng);
   const hasGps = Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0);
-  const query = hasGps ? `${lat},${lng}` : [item.name, addressOf(item) || locationFallback(item)].filter(Boolean).join(", ");
+  // Adres heeft voorrang: dat is wat de gebruiker ziet en heeft geverifieerd.
+  // GPS-coördinaten dienen alleen als fallback wanneer er geen adres bekend is
+  // (coördinaten uit een import kunnen fout zijn terwijl het adres wel klopt).
+  const query = address ? [item.name, address].filter(Boolean).join(", ") : hasGps ? `${lat},${lng}` : item.name || "";
   return item.mapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 };
 
