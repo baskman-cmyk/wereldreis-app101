@@ -1,3 +1,4 @@
+```tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   BedDouble,
@@ -41,17 +42,24 @@ const formatDate = (date: string) =>
   }).format(new Date(`${date}T12:00:00`));
 
 const formatMoney = (amount: number) =>
-  new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
+  new Intl.NumberFormat("nl-NL", {
+    style: "currency",
+    currency: "EUR",
+  }).format(amount);
 
 const flightLabel = (airline?: string, flightNumber?: string) => {
   const company = String(airline || "").trim();
   const number = String(flightNumber || "").trim();
+
   if (!company) return number;
   if (number.toUpperCase().startsWith(company.toUpperCase())) return number;
+
   return [company, number].filter(Boolean).join(" ");
 };
 
-const timeFromText = (value: string) => value.match(/^\s*(\d{1,2}[.:]\d{2})\b/)?.[1]?.replace(".", ":");
+const timeFromText = (value: string) =>
+  value.match(/^\s*\d{1,2}[.:]\d{2}\b/)?.[0]?.trim().replace(".", ":");
+
 const weatherLabel = (code?: number) => {
   if (code == null) return "onbekend";
   if (code === 0) return "helder";
@@ -64,71 +72,34 @@ const weatherLabel = (code?: number) => {
   if ([95, 96, 99].includes(code)) return "onweerachtig";
   return "wisselvallig";
 };
-const findInitialDayIndex = (days: TimelineDay[], currentDay: number) => {
+
+const findInitialDayIndex = (
+  days: TimelineDay[],
+  currentDay: number,
+) => {
   const today = getLocalIsoDate();
-  const isActualToday = day.date === today;
 
-  const [weather, setWeather] = useState<{ temp?: number; condition?: string; isCurrent: boolean } | null>(null);
-  useEffect(() => {
-    if (!navigator.onLine) { setWeather(null); return; }
-    const controller = new AbortController();
-    const daysAway = Math.round((new Date(`${day.date}T12:00:00`).getTime() - new Date(`${today}T12:00:00`).getTime()) / 86_400_000);
-    const showCurrentInstead = daysAway < 0 || daysAway > 10;
-    const load = async () => {
-      try {
-        let lat = Number(day.gps?.lat);
-        let lng = Number(day.gps?.lng);
-        if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) {
-          const geocode = new URL("https://geocoding-api.open-meteo.com/v1/search");
-          geocode.searchParams.set("name", [day.plaats || day.city, day.land || day.country].filter(Boolean).join(", "));
-          geocode.searchParams.set("count", "1");
-          geocode.searchParams.set("language", "nl");
-          const geoResponse = await fetch(geocode, { signal: controller.signal });
-          const geoResult = await geoResponse.json();
-          lat = Number(geoResult?.results?.[0]?.latitude);
-          lng = Number(geoResult?.results?.[0]?.longitude);
-        }
-        if (!Number.isFinite(lat) || !Number.isFinite(lng)) { setWeather(null); return; }
-        const url = new URL("https://api.open-meteo.com/v1/forecast");
-        url.searchParams.set("latitude", String(lat));
-        url.searchParams.set("longitude", String(lng));
-        url.searchParams.set("current", "temperature_2m,weather_code");
-        url.searchParams.set("daily", "weather_code,temperature_2m_max");
-        url.searchParams.set("forecast_days", "11");
-        url.searchParams.set("timezone", "auto");
-        const response = await fetch(url, { signal: controller.signal });
-        const result = await response.json();
-        if (showCurrentInstead) {
-          setWeather({ temp: result.current?.temperature_2m, condition: weatherLabel(result.current?.weather_code), isCurrent: true });
-        } else {
-          const index = (result.daily?.time || []).indexOf(day.date);
-          setWeather({ temp: result.daily?.temperature_2m_max?.[index], condition: weatherLabel(result.daily?.weather_code?.[index]), isCurrent: false });
-        }
-      } catch (cause: any) {
-        if (cause?.name !== "AbortError") setWeather(null);
-      }
-    };
-    void load();
-    return () => controller.abort();
-  }, [day.id, day.date, day.gps?.lat, day.gps?.lng, today]);
-
-  const weatherValue = weather
-    ? `${weather.temp != null ? Math.round(weather.temp) + "°" : "–"} · ${weather.condition}${weather.isCurrent ? " (nu)" : ""}`
-    : "Open Weer voor actuele gegevens";
+  const exactToday = days.findIndex((item) => item.date === today);
   if (exactToday >= 0) return exactToday;
 
-  const configuredDay = days.findIndex((item) => item.dayNumber === currentDay);
+  const configuredDay = days.findIndex(
+    (item) => item.dayNumber === currentDay,
+  );
   if (configuredDay >= 0) return configuredDay;
 
   const nextDay = days.findIndex((item) => item.date >= today);
   return nextDay >= 0 ? nextDay : Math.max(0, days.length - 1);
 };
 
-export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
+export const TodayView: React.FC<TodayViewProps> = ({
+  data,
+  setActiveTab,
+}) => {
   const sortedDays = useMemo(
     () => [...data.timeline].sort((a, b) => a.date.localeCompare(b.date)),
     [data.timeline],
   );
+
   const [selectedIndex, setSelectedIndex] = useState(() =>
     findInitialDayIndex(sortedDays, data.overview.currentDay),
   );
@@ -150,32 +121,192 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
   const today = getLocalIsoDate();
   const isActualToday = day.date === today;
 
-  const accommodation = data.accommodations.find(
-    (item) => day.date >= dateOnly(item.checkIn) && day.date < dateOnly(item.checkOut),
-  ) || data.accommodations.find(
-    (item) => String(item.stad || item.city || "").toLowerCase().includes(String(day.plaats || day.city || "").toLowerCase().split(",")[0]),
+  // Weer ophalen voor de geselecteerde reisdag.
+  const [weather, setWeather] = useState<{
+    temp?: number;
+    condition?: string;
+    isCurrent: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!navigator.onLine) {
+      setWeather(null);
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const daysAway = Math.round(
+      (new Date(`${day.date}T12:00:00`).getTime() -
+        new Date(`${today}T12:00:00`).getTime()) /
+        86_400_000,
+    );
+
+    const showCurrentInstead = daysAway < 0 || daysAway > 10;
+
+    const load = async () => {
+      try {
+        let lat = Number(day.gps?.lat);
+        let lng = Number(day.gps?.lng);
+
+        if (
+          !Number.isFinite(lat) ||
+          !Number.isFinite(lng) ||
+          (lat === 0 && lng === 0)
+        ) {
+          const geocode = new URL(
+            "https://geocoding-api.open-meteo.com/v1/search",
+          );
+
+          geocode.searchParams.set(
+            "name",
+            [day.plaats || day.city, day.land || day.country]
+              .filter(Boolean)
+              .join(", "),
+          );
+          geocode.searchParams.set("count", "1");
+          geocode.searchParams.set("language", "nl");
+
+          const geoResponse = await fetch(geocode, {
+            signal: controller.signal,
+          });
+
+          const geoResult = await geoResponse.json();
+
+          lat = Number(geoResult?.results?.[0]?.latitude);
+          lng = Number(geoResult?.results?.[0]?.longitude);
+        }
+
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+          setWeather(null);
+          return;
+        }
+
+        const url = new URL(
+          "https://api.open-meteo.com/v1/forecast",
+        );
+
+        url.searchParams.set("latitude", String(lat));
+        url.searchParams.set("longitude", String(lng));
+        url.searchParams.set("current", "temperature_2m,weather_code");
+        url.searchParams.set("daily", "weather_code,temperature_2m_max");
+        url.searchParams.set("forecast_days", "11");
+        url.searchParams.set("timezone", "auto");
+
+        const response = await fetch(url, {
+          signal: controller.signal,
+        });
+
+        const result = await response.json();
+
+        if (showCurrentInstead) {
+          setWeather({
+            temp: result.current?.temperature_2m,
+            condition: weatherLabel(result.current?.weather_code),
+            isCurrent: true,
+          });
+        } else {
+          const index = (result.daily?.time || []).indexOf(day.date);
+
+          setWeather({
+            temp: result.daily?.temperature_2m_max?.[index],
+            condition: weatherLabel(
+              result.daily?.weather_code?.[index],
+            ),
+            isCurrent: false,
+          });
+        }
+      } catch (cause: any) {
+        if (cause?.name !== "AbortError") {
+          setWeather(null);
+        }
+      }
+    };
+
+    void load();
+
+    return () => controller.abort();
+  }, [day.id, day.date, day.gps?.lat, day.gps?.lng, today]);
+
+  const weatherValue = weather
+    ? `${weather.temp != null ? Math.round(weather.temp) + "°" : "–"} · ${weather.condition}${weather.isCurrent ? " (nu)" : ""}`
+    : "Open Weer voor actuele gegevens";
+
+  const accommodation =
+    data.accommodations.find(
+      (item) =>
+        day.date >= dateOnly(item.checkIn) &&
+        day.date < dateOnly(item.checkOut),
+    ) ||
+    data.accommodations.find((item) =>
+      String(item.stad || item.city || "")
+        .toLowerCase()
+        .includes(
+          String(day.plaats || day.city || "")
+            .toLowerCase()
+            .split(",")[0],
+        ),
+    );
+
+  const flight = data.flights.find(
+    (item) => item.departureDate === day.date,
   );
-  const flight = data.flights.find((item) => item.departureDate === day.date);
+
   const activityMatches = data.activities.filter((item) => {
     if (item.date) return item.date === day.date;
-    return item.land === day.land && (
-      String(item.location || item.plaats || "").toLowerCase().includes(String(day.plaats || day.city || "").toLowerCase().split(",")[0])
-      || day.activiteiten.some((name) => name.toLowerCase().includes(String(item.name || item.title || "").toLowerCase()))
+
+    return (
+      item.land === day.land &&
+      (String(item.location || item.plaats || "")
+        .toLowerCase()
+        .includes(
+          String(day.plaats || day.city || "")
+            .toLowerCase()
+            .split(",")[0],
+        ) ||
+        day.activiteiten.some((name) =>
+          name
+            .toLowerCase()
+            .includes(
+              String(item.name || item.title || "").toLowerCase(),
+            ),
+        ))
     );
   });
-  const expenses = data.budgetExpenses.filter((item) => item.date === day.date);
-  const daySpend = expenses.reduce((sum, item) => sum + item.amountEur, 0);
-  const photos = data.photos.filter((item) => item.datum === day.date);
-  const journal = data.journals.find((item) => item.datum === day.date);
+
+  const expenses = data.budgetExpenses.filter(
+    (item) => item.date === day.date,
+  );
+
+  const daySpend = expenses.reduce(
+    (sum, item) => sum + item.amountEur,
+    0,
+  );
+
+  const photos = data.photos.filter(
+    (item) => item.datum === day.date,
+  );
+
+  const journal = data.journals.find(
+    (item) => item.datum === day.date,
+  );
+
   const countryChecklist = data.checklists.filter(
-    (item) => !item.completed && (!item.countryScope || item.countryScope === day.land),
+    (item) =>
+      !item.completed &&
+      (!item.countryScope || item.countryScope === day.land),
   );
-  const relevantDocuments = data.documents.filter((item) =>
-    item.categorie === "Boekingsbevestiging"
-    || item.categorie === "Verzekering"
-    || item.categorie === "Medicatieverklaring",
+
+  const relevantDocuments = data.documents.filter(
+    (item) =>
+      item.categorie === "Boekingsbevestiging" ||
+      item.categorie === "Verzekering" ||
+      item.categorie === "Medicatieverklaring",
   );
-  const plannedItems = (day.planItems || day.dayPlan || []).filter((item) => item.kind !== "flight" && item.type !== "flight");
+
+  const plannedItems = (day.planItems || day.dayPlan || []).filter(
+    (item) => item.kind !== "flight" && item.type !== "flight",
+  );
 
   const routeLabel = nextDay
     ? `${day.plaats} → ${nextDay.plaats}`
@@ -194,7 +325,9 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
         <button
           type="button"
           disabled={!previousDay}
-          onClick={() => setSelectedIndex((index) => Math.max(0, index - 1))}
+          onClick={() =>
+            setSelectedIndex((index) => Math.max(0, index - 1))
+          }
           className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-35 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800"
         >
           <ChevronLeft className="h-4 w-4" />
@@ -213,7 +346,11 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
         <button
           type="button"
           disabled={!nextDay}
-          onClick={() => setSelectedIndex((index) => Math.min(sortedDays.length - 1, index + 1))}
+          onClick={() =>
+            setSelectedIndex((index) =>
+              Math.min(sortedDays.length - 1, index + 1),
+            )
+          }
           className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-35 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800"
         >
           <span className="hidden sm:inline">Volgende dag</span>
@@ -224,12 +361,19 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
       <section className="relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-[#174A7E] via-[#17628a] to-[#1693a4] p-6 text-white shadow-lg md:p-8">
         <div className="absolute -right-14 -top-20 h-64 w-64 rounded-full bg-white/10" />
         <div className="absolute -bottom-24 left-1/3 h-52 w-52 rounded-full bg-cyan-200/10" />
+
         <div className="relative">
           <div className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wider text-cyan-100">
-            <span className="rounded-full bg-white/15 px-3 py-1">Reisdag {day.dayNumber}</span>
+            <span className="rounded-full bg-white/15 px-3 py-1">
+              Reisdag {day.dayNumber}
+            </span>
             <span>{formatDate(day.date)}</span>
           </div>
-          <h1 className="mt-4 text-3xl font-black tracking-tight md:text-5xl">{day.plaats}</h1>
+
+          <h1 className="mt-4 text-3xl font-black tracking-tight md:text-5xl">
+            {day.plaats}
+          </h1>
+
           <p className="mt-2 flex items-center gap-2 text-cyan-50">
             <MapPin className="h-4 w-4" /> {day.land}
           </p>
@@ -255,7 +399,11 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
           <button
             key={label}
             type="button"
-            onClick={() => label === "Route openen" && day.routeUrl ? window.open(day.routeUrl, "_blank", "noopener,noreferrer") : setActiveTab(tab)}
+            onClick={() =>
+              label === "Route openen" && day.routeUrl
+                ? window.open(day.routeUrl, "_blank", "noopener,noreferrer")
+                : setActiveTab(tab)
+            }
             className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
           >
             <Icon className="mb-3 h-5 w-5 text-[#1693a4]" />
@@ -288,23 +436,40 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
                 detail={`${flightLabel(flight.airline, flight.flightNumber)}${flight.arrivalTime ? ` · aankomst ${flight.arrivalTime}` : ""}${flight.bookingReference ? ` · reservering ${flight.bookingReference}` : ""}`}
               />
             )}
-            {(plannedItems.length ? plannedItems : day.activiteiten.map((title) => ({ title, time: timeFromText(title) }))).map((item, index) => {
+
+            {(plannedItems.length
+              ? plannedItems
+              : day.activiteiten.map((title) => ({
+                  title,
+                  time: timeFromText(title),
+                }))
+            ).map((item, index) => {
               const match = activityMatches[index];
+
               return (
                 <TimelineRow
                   key={`${item.id || item.title}-${index}`}
                   icon={index === 0 ? MapPin : Ticket}
                   time={item.time || item.startTime || "—"}
                   title={item.title.replace(/^\s*\d{1,2}[.:]\d{2}\s*/, "")}
-                  detail={item.detail || item.description || match?.description || match?.location || day.plaats}
+                  detail={
+                    item.detail ||
+                    item.description ||
+                    match?.description ||
+                    match?.location ||
+                    day.plaats
+                  }
                 />
               );
             })}
-            {!flight && plannedItems.length === 0 && day.activiteiten.length === 0 && (
-              <p className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500 dark:bg-slate-800">
-                Er staat nog niets gepland voor deze dag.
-              </p>
-            )}
+
+            {!flight &&
+              plannedItems.length === 0 &&
+              day.activiteiten.length === 0 && (
+                <p className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500 dark:bg-slate-800">
+                  Er staat nog niets gepland voor deze dag.
+                </p>
+              )}
           </div>
         </section>
 
@@ -313,9 +478,14 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
             icon={BedDouble}
             title="Overnachting"
             primary={accommodation?.name || day.overnachting || "Nog niet ingevuld"}
-            secondary={accommodation ? `${accommodation.address || accommodation.adres || accommodation.location || accommodation.stad || accommodation.city || "Adres nog niet ingevuld"} · check-in ${dateOnly(accommodation.checkIn)}` : day.plaats}
+            secondary={
+              accommodation
+                ? `${accommodation.address || accommodation.adres || accommodation.location || accommodation.stad || accommodation.city || "Adres nog niet ingevuld"} · check-in ${dateOnly(accommodation.checkIn)}`
+                : day.plaats
+            }
             onClick={() => setActiveTab("accommodaties")}
           />
+
           <InfoCard
             icon={Wallet}
             title="Vandaag uitgegeven"
@@ -323,11 +493,14 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
             secondary={`${expenses.length} uitgave${expenses.length === 1 ? "" : "n"} geregistreerd`}
             onClick={() => setActiveTab("budget")}
           />
+
           <InfoCard
             icon={Navigation}
             title="Volgende verplaatsing"
             primary={routeLabel}
-            secondary={nextDay ? formatDate(nextDay.date) : "Laatste geplande reisdag"}
+            secondary={
+              nextDay ? formatDate(nextDay.date) : "Laatste geplande reisdag"
+            }
             onClick={() => setActiveTab("navigatie")}
           />
         </div>
@@ -341,6 +514,7 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
           note="aan deze reisdag gekoppeld"
           onClick={() => setActiveTab("dagboek")}
         />
+
         <SummaryCard
           icon={BookOpen}
           title="Dagboek"
@@ -348,6 +522,7 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
           note={journal?.hoogtepunt || "Leg het mooiste moment vast"}
           onClick={() => setActiveTab("dagboek")}
         />
+
         <SummaryCard
           icon={CheckCircle2}
           title="Dagstatus"
@@ -363,14 +538,22 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
             <h2 className="flex items-center gap-2 font-black">
               <ShieldCheck className="h-5 w-5 text-[#1693a4]" /> Nog regelen
             </h2>
-            <button type="button" onClick={() => setActiveTab("checklist")} className="text-xs font-bold text-[#174A7E] dark:text-cyan-300">
+            <button
+              type="button"
+              onClick={() => setActiveTab("checklist")}
+              className="text-xs font-bold text-[#174A7E] dark:text-cyan-300"
+            >
               Checklist
             </button>
           </div>
+
           {countryChecklist.length ? (
             <div className="space-y-2">
               {countryChecklist.slice(0, 3).map((item) => (
-                <div key={item.id} className="flex items-start gap-3 rounded-2xl bg-slate-50 p-3 dark:bg-slate-800">
+                <div
+                  key={item.id}
+                  className="flex items-start gap-3 rounded-2xl bg-slate-50 p-3 dark:bg-slate-800"
+                >
                   <span className="mt-0.5 h-4 w-4 shrink-0 rounded-md border-2 border-slate-300 dark:border-slate-600" />
                   <p className="text-sm font-semibold">{item.text}</p>
                 </div>
@@ -388,10 +571,15 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
             <h2 className="flex items-center gap-2 font-black">
               <FileText className="h-5 w-5 text-[#1693a4]" /> Handige documenten
             </h2>
-            <button type="button" onClick={() => setActiveTab("documenten")} className="text-xs font-bold text-[#174A7E] dark:text-cyan-300">
+            <button
+              type="button"
+              onClick={() => setActiveTab("documenten")}
+              className="text-xs font-bold text-[#174A7E] dark:text-cyan-300"
+            >
               Alle documenten
             </button>
           </div>
+
           {relevantDocuments.length ? (
             <div className="space-y-2">
               {relevantDocuments.slice(0, 3).map((document) => (
@@ -404,10 +592,16 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
                   <span className="grid h-9 w-9 place-items-center rounded-xl bg-white text-[#174A7E] shadow-sm dark:bg-slate-900 dark:text-cyan-300">
                     <FileText className="h-4 w-4" />
                   </span>
+
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-bold">{document.titel}</span>
-                    <span className="block truncate text-xs text-slate-500">{document.categorie}</span>
+                    <span className="block truncate text-sm font-bold">
+                      {document.titel}
+                    </span>
+                    <span className="block truncate text-xs text-slate-500">
+                      {document.categorie}
+                    </span>
                   </span>
+
                   <ChevronRight className="ml-auto h-4 w-4 text-slate-400" />
                 </button>
               ))}
@@ -433,7 +627,9 @@ const HeroMetric = ({
   value: string;
 }) => (
   <div className="rounded-2xl bg-white/12 px-4 py-3 backdrop-blur-sm">
-    <span className="block text-[10px] font-bold uppercase tracking-wider text-cyan-100">{label}</span>
+    <span className="block text-[10px] font-bold uppercase tracking-wider text-cyan-100">
+      {label}
+    </span>
     <span className="mt-1 flex items-start gap-2 text-sm font-bold">
       <Icon className="mt-0.5 h-4 w-4 shrink-0" />
       <span className="line-clamp-2">{value}</span>
@@ -487,11 +683,13 @@ const InfoCard = ({
       <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#174A7E] text-white">
         <Icon className="h-5 w-5" />
       </span>
+
       <div className="min-w-0">
         <p className="text-xs font-bold uppercase text-slate-500">{title}</p>
         <p className="mt-1 truncate font-black">{primary}</p>
         <p className="mt-1 line-clamp-2 text-xs text-slate-500">{secondary}</p>
       </div>
+
       <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-slate-400" />
     </div>
   </button>
@@ -523,13 +721,26 @@ const SummaryCard = ({
   </button>
 );
 
-const EmptyState = ({ title, text, onClick }: { title: string; text: string; onClick: () => void }) => (
+const EmptyState = ({
+  title,
+  text,
+  onClick,
+}: {
+  title: string;
+  text: string;
+  onClick: () => void;
+}) => (
   <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
     <CalendarDays className="mx-auto h-10 w-10 text-[#1693a4]" />
     <h1 className="mt-4 text-xl font-black">{title}</h1>
     <p className="mx-auto mt-2 max-w-md text-sm text-slate-500">{text}</p>
-    <button type="button" onClick={onClick} className="mt-5 rounded-xl bg-[#174A7E] px-4 py-2 text-sm font-bold text-white">
+    <button
+      type="button"
+      onClick={onClick}
+      className="mt-5 rounded-xl bg-[#174A7E] px-4 py-2 text-sm font-bold text-white"
+    >
       Naar reisplanning
     </button>
   </div>
 );
+```
