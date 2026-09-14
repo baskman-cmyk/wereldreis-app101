@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   BedDouble,
   BookOpen,
@@ -52,10 +52,69 @@ const flightLabel = (airline?: string, flightNumber?: string) => {
 };
 
 const timeFromText = (value: string) => value.match(/^\s*(\d{1,2}[.:]\d{2})\b/)?.[1]?.replace(".", ":");
-
+const weatherLabel = (code?: number) => {
+  if (code == null) return "onbekend";
+  if (code === 0) return "helder";
+  if ([1, 2].includes(code)) return "licht bewolkt";
+  if (code === 3) return "bewolkt";
+  if ([45, 48].includes(code)) return "mistig";
+  if ([51, 53, 55, 56, 57].includes(code)) return "motregen";
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return "regenachtig";
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return "sneeuwachtig";
+  if ([95, 96, 99].includes(code)) return "onweerachtig";
+  return "wisselvallig";
+};
 const findInitialDayIndex = (days: TimelineDay[], currentDay: number) => {
   const today = getLocalIsoDate();
-  const exactToday = days.findIndex((item) => item.date === today);
+  const isActualToday = day.date === today;
+
+  const [weather, setWeather] = useState<{ temp?: number; condition?: string; isCurrent: boolean } | null>(null);
+  useEffect(() => {
+    if (!navigator.onLine) { setWeather(null); return; }
+    const controller = new AbortController();
+    const daysAway = Math.round((new Date(`${day.date}T12:00:00`).getTime() - new Date(`${today}T12:00:00`).getTime()) / 86_400_000);
+    const showCurrentInstead = daysAway < 0 || daysAway > 10;
+    const load = async () => {
+      try {
+        let lat = Number(day.gps?.lat);
+        let lng = Number(day.gps?.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) {
+          const geocode = new URL("https://geocoding-api.open-meteo.com/v1/search");
+          geocode.searchParams.set("name", [day.plaats || day.city, day.land || day.country].filter(Boolean).join(", "));
+          geocode.searchParams.set("count", "1");
+          geocode.searchParams.set("language", "nl");
+          const geoResponse = await fetch(geocode, { signal: controller.signal });
+          const geoResult = await geoResponse.json();
+          lat = Number(geoResult?.results?.[0]?.latitude);
+          lng = Number(geoResult?.results?.[0]?.longitude);
+        }
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) { setWeather(null); return; }
+        const url = new URL("https://api.open-meteo.com/v1/forecast");
+        url.searchParams.set("latitude", String(lat));
+        url.searchParams.set("longitude", String(lng));
+        url.searchParams.set("current", "temperature_2m,weather_code");
+        url.searchParams.set("daily", "weather_code,temperature_2m_max");
+        url.searchParams.set("forecast_days", "11");
+        url.searchParams.set("timezone", "auto");
+        const response = await fetch(url, { signal: controller.signal });
+        const result = await response.json();
+        if (showCurrentInstead) {
+          setWeather({ temp: result.current?.temperature_2m, condition: weatherLabel(result.current?.weather_code), isCurrent: true });
+        } else {
+          const index = (result.daily?.time || []).indexOf(day.date);
+          setWeather({ temp: result.daily?.temperature_2m_max?.[index], condition: weatherLabel(result.daily?.weather_code?.[index]), isCurrent: false });
+        }
+      } catch (cause: any) {
+        if (cause?.name !== "AbortError") setWeather(null);
+      }
+    };
+    void load();
+    return () => controller.abort();
+  }, [day.id, day.date, day.gps?.lat, day.gps?.lng, today]);
+
+  const weatherValue = weather
+    ? `${weather.temp != null ? Math.round(weather.temp) + "°" : "–"} · ${weather.condition}${weather.isCurrent ? " (nu)" : ""}`
+    : "Open Weer voor actuele gegevens";
   if (exactToday >= 0) return exactToday;
 
   const configuredDay = days.findIndex((item) => item.dayNumber === currentDay);
@@ -179,7 +238,7 @@ export const TodayView: React.FC<TodayViewProps> = ({ data, setActiveTab }) => {
             <HeroMetric
               label="Weer"
               icon={CloudSun}
-              value="Open Weer voor actuele gegevens"
+              value={weatherValue}
             />
             <HeroMetric
               label="Overnachting"
