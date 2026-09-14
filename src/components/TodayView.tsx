@@ -104,24 +104,13 @@ export const TodayView: React.FC<TodayViewProps> = ({
     findInitialDayIndex(sortedDays, data.overview.currentDay),
   );
 
-  if (!sortedDays.length) {
-    return (
-      <EmptyState
-        title="Nog geen reisdag beschikbaar"
-        text="Voeg eerst een dag toe aan de reisplanning. Daarna verschijnt hier automatisch je dagoverzicht."
-        onClick={() => setActiveTab("timeline")}
-      />
-    );
-  }
-
-  const safeIndex = Math.min(selectedIndex, sortedDays.length - 1);
+  const safeIndex = Math.min(selectedIndex, Math.max(sortedDays.length - 1, 0));
   const day = sortedDays[safeIndex];
-  const previousDay = sortedDays[safeIndex - 1];
-  const nextDay = sortedDays[safeIndex + 1];
   const today = getLocalIsoDate();
-  const isActualToday = day.date === today;
 
   // Weer ophalen voor de geselecteerde reisdag.
+  // Let op: deze hooks staan bewust VOOR de "geen reisdagen"-check hieronder,
+  // want React vereist dat hooks bij elke render in dezelfde volgorde lopen.
   const [weather, setWeather] = useState<{
     temp?: number;
     condition?: string;
@@ -129,7 +118,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
   } | null>(null);
 
   useEffect(() => {
-    if (!navigator.onLine) {
+    if (!day || !navigator.onLine) {
       setWeather(null);
       return;
     }
@@ -226,7 +215,21 @@ export const TodayView: React.FC<TodayViewProps> = ({
     void load();
 
     return () => controller.abort();
-  }, [day.id, day.date, day.gps?.lat, day.gps?.lng, today]);
+   }, [day?.id, day?.date, day?.gps?.lat, day?.gps?.lng, today]);
+
+  if (!sortedDays.length || !day) {
+    return (
+      <EmptyState
+        title="Nog geen reisdag beschikbaar"
+        text="Voeg eerst een dag toe aan de reisplanning. Daarna verschijnt hier automatisch je dagoverzicht."
+        onClick={() => setActiveTab("timeline")}
+      />
+    );
+  }
+
+  const previousDay = sortedDays[safeIndex - 1];
+  const nextDay = sortedDays[safeIndex + 1];
+  const isActualToday = day.date === today;
 
   const weatherValue = weather
     ? `${weather.temp != null ? Math.round(weather.temp) + "°" : "–"} · ${weather.condition}${weather.isCurrent ? " (nu)" : ""}`
