@@ -1,4 +1,3 @@
-```tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   BedDouble,
@@ -215,7 +214,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
     void load();
 
     return () => controller.abort();
-   }, [day?.id, day?.date, day?.gps?.lat, day?.gps?.lng, today]);
+  }, [day?.id, day?.date, day?.gps?.lat, day?.gps?.lng, today]);
 
   if (!sortedDays.length || !day) {
     return (
@@ -746,4 +745,3 @@ const EmptyState = ({
     </button>
   </div>
 );
-```
